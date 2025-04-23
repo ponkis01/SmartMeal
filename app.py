@@ -7,7 +7,7 @@ import streamlit as st
 API_KEY = "37b9d6cf14e549739544c7a1eb1ca971"
 
 # ------------------------
-# 🔍 Gerichtssuche mit Query
+# 🔍 Search for meals by keyword
 # ------------------------
 def search_meal(query):
     url = "https://api.spoonacular.com/recipes/complexSearch"
@@ -21,14 +21,14 @@ def search_meal(query):
     return response.json().get("results", [])
 
 # ------------------------
-# 📊 Rezepte nach Protein + Kalorien filtern
+# 📊 Filter meals by protein and calories
 # ------------------------
-def suche_rezepte_mit_protein(min_protein=25, max_calories=None, anzahl=5):
+def search_recipes_by_protein(min_protein=25, max_calories=None, number=5):
     search_url = "https://api.spoonacular.com/recipes/complexSearch"
     params = {
         "apiKey": API_KEY,
         "minProtein": min_protein,
-        "number": anzahl,
+        "number": number,
         "addRecipeInformation": False
     }
     if max_calories:
@@ -36,8 +36,8 @@ def suche_rezepte_mit_protein(min_protein=25, max_calories=None, anzahl=5):
 
     response = requests.get(search_url, params=params).json()
     results = []
-    for rezept in response.get("results", []):
-        r_id = rezept["id"]
+    for recipe in response.get("results", []):
+        r_id = recipe["id"]
         details = requests.get(
             f"https://api.spoonacular.com/recipes/{r_id}/information",
             params={"apiKey": API_KEY, "includeNutrition": True}
@@ -46,62 +46,62 @@ def suche_rezepte_mit_protein(min_protein=25, max_calories=None, anzahl=5):
     return results
 
 # ------------------------
-# 💰 Dynamische Preislogik
+# 💰 Dynamic price logic
 # ------------------------
-def berechne_preis(basispreis, bewertung):
-    if bewertung >= 4.5:
-        return round(basispreis * 1.2, 2)
-    elif bewertung < 3.0:
-        return round(basispreis * 0.9, 2)
+def calculate_price(base_price, rating):
+    if rating >= 4.5:
+        return round(base_price * 1.2, 2)
+    elif rating < 3.0:
+        return round(base_price * 0.9, 2)
     else:
-        return round(basispreis, 2)
+        return round(base_price, 2)
 
 # ------------------------
-# 🧠 Bewertung aktualisieren
+# 🧠 Update rating
 # ------------------------
-def aktualisiere_bewertung(gericht, neue_bewertung):
-    gericht["bewertungen"].append(neue_bewertung)
-    durchschnitt = sum(gericht["bewertungen"]) / len(gericht["bewertungen"])
-    gericht["bewertung"] = round(durchschnitt, 2)
-    return gericht
+def update_rating(meal, new_rating):
+    meal["ratings"].append(new_rating)
+    average = sum(meal["ratings"]) / len(meal["ratings"])
+    meal["rating"] = round(average, 2)
+    return meal
 
 # ------------------------
 # 🚀 Streamlit App
 # ------------------------
 st.set_page_config(page_title="SmartMeal 🍽️", layout="centered")
-st.title("SmartMeal 🍽️ – Makrobewusste Rezeptsuche")
+st.title("SmartMeal 🍽️ – Macro-Aware Recipe Finder")
 
-# 🥩 Makro-Filter Sidebar
-st.sidebar.header("Makro-Filter")
-min_protein = st.sidebar.slider("Mind. Protein (g)", 0, 100, 25)
-max_calories = st.sidebar.slider("Max. Kalorien", 100, 1500, 600)
-anzahl = st.sidebar.slider("Anzahl Gerichte", 1, 10, 3)
+# 🥩 Macro Filters Sidebar
+st.sidebar.header("Macro Filters")
+min_protein = st.sidebar.slider("Min. Protein (g)", 0, 100, 25)
+max_calories = st.sidebar.slider("Max. Calories", 100, 1500, 600)
+number = st.sidebar.slider("Number of Meals", 1, 10, 3)
 
-# 🔍 Suche auslösen
-if st.button("🔍 Gerichte mit Filter suchen"):
-    rezepte = suche_rezepte_mit_protein(min_protein, max_calories, anzahl)
+# 🔍 Trigger search
+if st.button("🔍 Search Meals with Filters"):
+    recipes = search_recipes_by_protein(min_protein, max_calories, number)
 
-    if not rezepte:
-        st.warning("Keine passenden Gerichte gefunden.")
+    if not recipes:
+        st.warning("No matching meals found.")
     else:
-        for rezept in rezepte:
-            st.subheader(rezept["title"])
-            st.image(rezept["image"], width=300)
+        for recipe in recipes:
+            st.subheader(recipe["title"])
+            st.image(recipe["image"], width=300)
 
-            makros = {n["name"]: n["amount"] for n in rezept["nutrition"]["nutrients"]}
-            kcal = makros.get("Calories", 0)
-            protein = makros.get("Protein", 0)
-            fett = makros.get("Fat", 0)
-            carbs = makros.get("Carbohydrates", 0)
+            macros = {n["name"]: n["amount"] for n in recipe["nutrition"]["nutrients"]}
+            kcal = macros.get("Calories", 0)
+            protein = macros.get("Protein", 0)
+            fat = macros.get("Fat", 0)
+            carbs = macros.get("Carbohydrates", 0)
 
-            st.markdown(f"🧪 **Kalorien:** {kcal:.0f} kcal")
+            st.markdown(f"🧪 **Calories:** {kcal:.0f} kcal")
             st.markdown(f"💪 **Protein:** {protein:.1f} g")
-            st.markdown(f"🥈 **Fett:** {fett:.1f} g")
-            st.markdown(f"🥖 **Kohlenhydrate:** {carbs:.1f} g")
+            st.markdown(f"🥈 **Fat:** {fat:.1f} g")
+            st.markdown(f"🥖 **Carbohydrates:** {carbs:.1f} g")
 
-            bewertung = st.slider(f"🧑‍🏫 Deine Bewertung für {rezept['title']}", 1.0, 5.0, 4.0, 0.5)
-            neuer_preis = berechne_preis(10, bewertung)
-            st.markdown(f"💰 **Preis nach Bewertung:** {neuer_preis:.2f} CHF")
+            rating = st.slider(f"🧑‍🏫 Your rating for {recipe['title']}", 1.0, 5.0, 4.0, 0.5)
+            new_price = calculate_price(10, rating)
+            st.markdown(f"💰 **Price after rating:** {new_price:.2f} CHF")
 
-            if st.button(f"✅ Bewertung speichern für {rezept['title']}"):
-                st.success("Bewertung gespeichert!")
+            if st.button(f"✅ Save rating for {recipe['title']}"):
+                st.success("Rating saved!")
