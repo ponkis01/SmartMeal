@@ -1,12 +1,15 @@
+import random
 import requests
 import streamlit as st
+import pandas as pd
+import altair as alt
 from typing import List, Dict, Tuple
 
 # ------------------------
 # 🔐 Spoonacular API Key
 # ------------------------
 API_KEY = "37b9d6cf14e549739544c7a1eb1ca971"
-BASE_PRICE = 10.0  # CHF
+PRICE_CURRENCY = "CHF"  # Wir behandeln Spoonacular‑USD ≈ CHF (vereinfachend)
 
 # ------------------------
 # 🔍 Spoonacular Search
@@ -15,7 +18,7 @@ BASE_PRICE = 10.0  # CHF
 def search_recipes_by_protein(
     min_protein: int = 25, max_calories: int | None = None, number: int = 5
 ) -> List[Dict]:
-    """Query Spoonacular for high‑protein recipes and return full nutrition."""
+    """Query Spoonacular for high‑protein recipes and return nutrition & price."""
     search_url = "https://api.spoonacular.com/recipes/complexSearch"
     params = {
         "apiKey": API_KEY,
@@ -39,10 +42,19 @@ def search_recipes_by_protein(
 
 
 # ------------------------
-# 💰 Price Logic
+# 💰 Price Helpers
 # ------------------------
 
+def extract_base_price(recipe: Dict) -> float:
+    """Return price per serving in CHF (Spoonacular liefert Cents in USD)."""
+    cents = recipe.get("pricePerServing", 0)  # US‑Cents
+    return round(cents / 100, 2)  # ~USD → CHF
+
+
 def calculate_price(base_price: float, rating: float) -> float:
+    """Dynamic price: teurer bei hoher, günstiger bei niedriger Bewertung."""
+    if base_price == 0:
+        return 0.0
     if rating >= 4.5:
         return round(base_price * 1.2, 2)
     if rating < 3.0:
@@ -51,16 +63,23 @@ def calculate_price(base_price: float, rating: float) -> float:
 
 
 # ------------------------
-# 🧠 Rating & Scoring Helpers
+# 🧠 Session State Init
 # ------------------------
 
 if "recipe_ratings" not in st.session_state:
-    # recipe_id -> {title, image, calories, ratings: List[float]}
+    # recipe_id -> {title, image, calories, base_price, ratings: List[float]}
     st.session_state.recipe_ratings: Dict[int, Dict] = {}
 
 if "recipes" not in st.session_state:
     st.session_state.recipes: List[Dict] = []  # last search result
 
+if "favorite_recipes" not in st.session_state:
+    st.session_state.favorite_recipes: Dict[int, Dict] = {}
+
+
+# ------------------------
+# 🧠 Rating & Helper Functions
+# ------------------------
 
 def save_rating(recipe: Dict, rating: float) -> None:
     rid = recipe["id"]
@@ -70,6 +89,7 @@ def save_rating(recipe: Dict, rating: float) -> None:
             "title": recipe["title"],
             "image": recipe["image"],
             "calories": extract_calories(recipe),
+            "base_price": extract_base_price(recipe),
             "ratings": [],
         },
     )
@@ -98,36 +118,56 @@ WEIGHT_CAL = 0.2
 
 def _normalise(value: float, v_min: float, v_max: float, reverse: bool = False) -> float:
     if v_max == v_min:
-        return 1.0  # avoid zero‑division, all equal
+        return 1.0
     norm = (value - v_min) / (v_max - v_min)
     return 1 - norm if reverse else norm
 
 
-def choose_dish_of_the_day() -> Tuple[Dict | None, float]:
-    """Return (entry, composite_score)."""
-    entries = [e for e in st.session_state.recipe_ratings.values() if e["ratings"]]
-    if not entries:
-        return None, 0.0
+def _normalise_series(series: pd.Series, reverse: bool = False) -> pd.Series:
+    if series.max() == series.min():
+        return pd.Series(1.0, index=series.index)
+    norm = (series - series.min()) / (series.max() - series.min())
+    return 1 - norm if reverse else norm
 
-    # collect metrics
-    ratings_bayes = [bayesian_average(e["ratings"]) for e in entries]
-    prices = [calculate_price(BASE_PRICE, r) for r in ratings_bayes]
-    calories = [e["calories"] for e in entries]
 
-    r_min, r_max = min(ratings_bayes), max(ratings_bayes)
-    p_min, p_max = min(prices), max(prices)
-    c_min, c_max = min(calories), max(calories)
-
-    best, best_score = None, -1.0
-    for e, r_b, p, c in zip(entries, ratings_bayes, prices, calories):
-        score = (
-            WEIGHT_RATING * _normalise(r_b, r_min, r_max)
-            + WEIGHT_PRICE * _normalise(p, p_min, p_max, reverse=True)
-            + WEIGHT_CAL * _normalise(c, c_min, c_max, reverse=True)
+def build_score_df() -> pd.DataFrame:
+    """DataFrame aller bewerteten Gerichte inkl. Preis aus API."""
+    rows = []
+    for rid, e in st.session_state.recipe_ratings.items():
+        if not e["ratings"]:
+            continue
+        bayes = bayesian_average(e["ratings"])
+        price_after_rating = calculate_price(e["base_price"], bayes)
+        rows.append(
+            {
+                "id": rid,
+                "title": e["title"],
+                "image": e["image"],
+                "calories": e["calories"],
+                "bayes_rating": bayes,
+                "price": price_after_rating,
+            }
         )
-        if score > best_score:
-            best, best_score = e | {"bayes_rating": r_b, "price": p}, score
-    return best, best_score
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    df["norm_rating"] = _normalise_series(df["bayes_rating"])
+    df["norm_price"] = _normalise_series(df["price"], reverse=True)
+    df["norm_cal"] = _normalise_series(df["calories"], reverse=True)
+    df["score"] = (
+        WEIGHT_RATING * df["norm_rating"]
+        + WEIGHT_PRICE * df["norm_price"]
+        + WEIGHT_CAL * df["norm_cal"]
+    )
+    return df
+
+
+def choose_dish_of_the_day(df: pd.DataFrame) -> Tuple[Dict | None, float]:
+    if df.empty:
+        return None, 0.0
+    best_row = df.loc[df["score"].idxmax()]
+    return best_row.to_dict(), best_row["score"]
 
 
 # ------------------------
@@ -135,13 +175,26 @@ def choose_dish_of_the_day() -> Tuple[Dict | None, float]:
 # ------------------------
 
 st.set_page_config(page_title="SmartMeal 🍽️", layout="centered")
-st.title("SmartMeal 🍽️ – Macro-Aware Recipe Finder")
+st.title("SmartMeal 🍽️ – Macro‑Aware Recipe Finder")
 
 # 🥩 Macro Filters Sidebar
 st.sidebar.header("Macro Filters")
 min_protein = st.sidebar.slider("Min. Protein (g)", 0, 100, 25)
 max_calories = st.sidebar.slider("Max. Calories", 100, 1500, 600)
 number = st.sidebar.slider("Number of Meals", 1, 10, 3)
+
+# 🎲 Surprise‑Me Button (sidebar)
+if st.sidebar.button("🎲 Surprise me"):
+    pool = list(st.session_state.favorite_recipes.values()) or st.session_state.recipes
+    if not pool:
+        st.sidebar.warning("Keine Gerichte vorhanden – bitte zuerst suchen.")
+    else:
+        surprise = random.choice(pool)
+        st.sidebar.markdown("## 🪄 Dein Zufallsvorschlag:")
+        st.sidebar.write(surprise["title"])
+        st.sidebar.image(surprise["image"], width=200)
+        kcal = extract_calories(surprise)
+        st.sidebar.caption(f"{kcal:.0f} kcal • {extract_base_price(surprise):.2f} {PRICE_CURRENCY}")
 
 # 🔍 Search
 if st.button("🔍 Search Meals with Filters"):
@@ -157,10 +210,21 @@ else:
         rid = recipe["id"]
         title = recipe["title"]
         image = recipe["image"]
+        base_price = extract_base_price(recipe)
 
         with st.container():
-            st.subheader(title)
-            st.image(image, width=300)
+            cols = st.columns([2, 1])
+            with cols[0]:
+                st.subheader(title)
+                st.image(image, width=300)
+            with cols[1]:
+                fav_state = rid in st.session_state.favorite_recipes
+                fav_label = "★ Entfernen" if fav_state else "☆ Favorit"
+                if st.button(fav_label, key=f"fav_{rid}"):
+                    if fav_state:
+                        st.session_state.favorite_recipes.pop(rid)
+                    else:
+                        st.session_state.favorite_recipes[rid] = recipe
 
             kcal = extract_calories(recipe)
             macros = {n["name"]: n["amount"] for n in recipe["nutrition"]["nutrients"]}
@@ -169,14 +233,14 @@ else:
             carbs = macros.get("Carbohydrates", 0)
 
             st.markdown(
-                f"🧪 **Calories:** {kcal:.0f} kcal  |  💪 **Protein:** {protein:.1f} g  |  🥈 **Fat:** {fat:.1f} g  |  🥖 **Carbs:** {carbs:.1f} g"
+                f"🧪 **Calories:** {kcal:.0f} kcal  |  💪 **Protein:** {protein:.1f} g  |  🥈 **Fat:** {fat:.1f} g  |  🥖 **Carbs:** {carbs:.1f} g  |  💰 **Preis:** {base_price:.2f} {PRICE_CURRENCY}"
             )
 
-            # Rating Form (isolated rerun)
+            # Rating Form
             with st.form(key=f"form_{rid}"):
                 rating = st.slider("🧑‍🏫 Deine Bewertung", 1.0, 5.0, 4.0, 0.5, key=f"rating_{rid}")
-                new_price = calculate_price(BASE_PRICE, rating)
-                st.markdown(f"💰 **Preis nach Rating:** {new_price:.2f} CHF")
+                new_price = calculate_price(base_price, rating)
+                st.markdown(f"💰 **Preis nach Rating:** {new_price:.2f} {PRICE_CURRENCY}")
                 submitted = st.form_submit_button("✅ Bewertung speichern")
                 if submitted:
                     save_rating(recipe, rating)
@@ -184,16 +248,43 @@ else:
 
             st.markdown("---")
 
-# ⭐ Dish of the Day – shown at the very end of the page
-best, score = choose_dish_of_the_day()
-if best:
+# ⭐ Dish of the Day & Visualisation
+score_df = build_score_df()
+auto_best, auto_score = choose_dish_of_the_day(score_df)
+
+if auto_best:
     st.header("💡 Gericht des Tages")
-    st.subheader(best["title"])
-    st.image(best["image"], width=350)
+    st.subheader(auto_best["title"])
+    st.image(auto_best["image"], width=350)
     st.markdown(
-        f"👉 **Gesamtscore:** {score:.2%}\n\n"
-        f"⭐️ Bayes‑Rating: {best['bayes_rating']:.2f} / 5\n"
-        f"💰 Preis (mit Rating): {best['price']:.2f} CHF\n"
-        f"🔥 Kalorien: {best['calories']:.0f} kcal"
+        f"👉 **Gesamtscore:** {auto_score:.2%}\n\n"
+        f"⭐️ Bayes‑Rating: {auto_best['bayes_rating']:.2f} / 5\n"
+        f"💰 Preis (mit Rating): {auto_best['price']:.2f} {PRICE_CURRENCY}\n"
+        f"🔥 Kalorien: {extract_calories(auto_best):.0f} kcal"
     )
+
+# 📊 Vergleichs‑Visualisierung aller bewerteten Gerichte
+if not score_df.empty:
+    st.subheader("📊 Score‑Vergleich aller bewerteten Gerichte")
+    chart = (
+        alt.Chart(score_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("score:Q", title="Composite Score (0‑1)"),
+            y=alt.Y("title:N", sort="-x", title="Gericht"),
+            color=alt.condition(
+                alt.datum.title == auto_best.get("title", ""), alt.value("#ffbf00"), alt.value("#3182bd")
+            ),
+            tooltip=[
+                alt.Tooltip("title:N", title="Gericht"),
+                alt.Tooltip("bayes_rating:Q", title="Bayes‑Rating", format=".2f"),
+                alt.Tooltip("price:Q", title=f"Preis ({PRICE_CURRENCY})", format=".2f"),
+                alt.Tooltip("calories:Q", title="Kalorien", format=".0f"),
+                alt.Tooltip("score:Q", title="Score", format=".2%"),
+            ],
+        )
+        .properties(height=300)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
 
