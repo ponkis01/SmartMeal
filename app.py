@@ -3,16 +3,18 @@ import requests
 import streamlit as st
 import pandas as pd
 import altair as alt
+import numpy as np
+import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional
 
 # ------------------------
 # 🔐 Spoonacular API Key
 # ------------------------
 API_KEY = "37b9d6cf14e549739544c7a1eb1ca971"
-PRICE_CURRENCY = "CHF"  # Treat Spoonacular USD roughly as CHF for demo purposes
+PRICE_CURRENCY = "CHF"  # Treat Spoonacular USD roughly as CHF
 
 # ------------------------
-# 🔧 Spoonacular helpers
+# 🛠️ Low‑level helpers
 # ------------------------
 
 def _get(url: str, params: Optional[Dict] = None) -> Dict:
@@ -22,7 +24,10 @@ def _get(url: str, params: Optional[Dict] = None) -> Dict:
     return requests.get(url, params=base, timeout=15).json()
 
 
+# ⬇️ SPOONACULAR FETCHERS ----------------------------------------------------
+
 def fetch_recipe_info(recipe_id: int) -> Dict:
+    """Full recipe info including nutrition & instructions."""
     return _get(
         f"https://api.spoonacular.com/recipes/{recipe_id}/information",
         {"includeNutrition": True},
@@ -32,7 +37,6 @@ def fetch_recipe_info(recipe_id: int) -> Dict:
 def fetch_similar_recipes(
     recipe_id: int, *, number: int = 6, exclude_ids: Optional[set] = None
 ) -> List[Dict]:
-    """Return detailed info for recipes similar to `recipe_id`."""
     exclude_ids = exclude_ids or set()
     sims = _get(
         f"https://api.spoonacular.com/recipes/{recipe_id}/similar",
@@ -63,6 +67,35 @@ def search_recipes_by_protein(
     data = _get("https://api.spoonacular.com/recipes/complexSearch", params)
     return [fetch_recipe_info(r["id"]) for r in data.get("results", [])]
 
+
+# 👉 Taste profile (Radar) ----------------------------------------------------
+
+@st.cache_data(ttl=60 * 60 * 24)
+def fetch_taste_profile(recipe_id: int) -> Dict[str, float]:
+    """Returns sweetness, saltiness, etc. values 0‑100."""
+    return _get(f"https://api.spoonacular.com/recipes/{recipe_id}/tasteWidget.json")
+
+
+def render_taste_radar(profile: Dict[str, float]):
+    if not profile:
+        st.info("No taste profile available for this recipe.")
+        return
+
+    labels = list(profile.keys())
+    values = [profile[l] for l in labels]
+    values += values[:1]  # close loop
+    angles = np.linspace(0, 2 * np.pi, len(labels) + 1)
+
+    fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
+    ax.plot(angles, values, linewidth=2)
+    ax.fill(angles, values, alpha=0.25)
+    ax.set_thetagrids(angles[:-1] * 180 / np.pi, labels)
+    ax.set_ylim(0, 100)
+    ax.set_title("Taste profile (0‑100)")
+    ax.grid(True)
+    st.pyplot(fig, use_container_width=False)
+
+
 # ------------------------
 # 💰 Price helpers
 # ------------------------
@@ -81,8 +114,9 @@ def calculate_price(base_price: float, rating: float) -> float:
         return round(base_price * 0.9, 2)
     return round(base_price, 2)
 
+
 # ------------------------
-# 🧠 Session state init
+# 🧠 Session State init
 # ------------------------
 
 if "recipe_ratings" not in st.session_state:
@@ -93,7 +127,7 @@ if "favorite_recipes" not in st.session_state:
     st.session_state.favorite_recipes: Dict[int, Dict] = {}
 
 # ------------------------
-# 🔬 metrics helpers
+# 🔬 Metrics helpers
 # ------------------------
 
 def bayesian_average(ratings: List[float], C: float = 3.5, m: int = 5) -> float:
@@ -163,15 +197,15 @@ def choose_dish_of_the_day(df: pd.DataFrame) -> Tuple[Optional[Dict], float]:
 # ------------------------
 
 st.set_page_config(page_title="SmartMeal 🍽️", layout="centered")
-st.title("SmartMeal 🍽️ – Macro‑Aware Recipe Finder")
+st.title("SmartMeal 🍽️ – Macro‑Aware Recipe Finder")
 
-# sidebar filters
+# Sidebar filters
 st.sidebar.header("Macro Filters")
 min_protein = st.sidebar.slider("Min. Protein (g)", 0, 100, 25)
 max_calories = st.sidebar.slider("Max. Calories", 100, 1500, 600)
 number = st.sidebar.slider("Number of Meals", 1, 10, 3)
 
-# 🎲 surprise‑me (similar recipe)
+# 🎲 Surprise‑me (similar recipe)
 if st.sidebar.button("🎲 Surprise me with something similar"):
     if not st.session_state.favorite_recipes:
         st.sidebar.warning("You haven't saved any favorites yet.")
@@ -189,13 +223,13 @@ if st.sidebar.button("🎲 Surprise me with something similar"):
                 f"{extract_calories(pick):.0f} kcal • {extract_base_price(pick):.2f} {PRICE_CURRENCY}"
             )
 
-# search trigger
+# Trigger search
 if st.button("🔍 Search meals with filters"):
     st.session_state.recipes = search_recipes_by_protein(
         min_protein=min_protein, max_calories=max_calories, number=number
     )
 
-# recipe list
+# Recipe list ----------------------------------------------------------------
 if not st.session_state.recipes:
     st.info("Use the search to find matching dishes.")
 else:
@@ -212,66 +246,5 @@ else:
                 label = "★ Remove" if fav else "☆ Favorite"
                 if st.button(label, key=f"fav_{rid}"):
                     if fav:
-                        st.session_state.favorite_recipes.pop(rid)
-                    else:
-                        st.session_state.favorite_recipes[rid] = rec
-            kcal = extract_calories(rec)
-            macros = {n["name"]: n["amount"] for n in rec["nutrition"]["nutrients"]}
-            st.markdown(
-                f"🧪 **Calories:** {kcal:.0f} kcal | 💪 Protein: {macros.get('Protein', 0):.1f} g | 💰 Price: {base_price:.2f} {PRICE_CURRENCY}"
-            )
-            with st.form(key=f"form_{rid}"):
-                rating = st.slider("🧑‍🏫 Your rating", 1.0, 5.0, 4.0, 0.5, key=f"rate_{rid}")
-                dyn_price = calculate_price(base_price, rating)
-                st.markdown(f"💰 Price after rating: {dyn_price:.2f} {PRICE_CURRENCY}")
-                if st.form_submit_button("✅ Save rating"):
-                    st.session_state.recipe_ratings.setdefault(
-                        rid,
-                        {
-                            "title": rec["title"],
-                            "image": rec["image"],
-                            "calories": kcal,
-                            "base_price": base_price,
-                            "ratings": [],
-                        },
-                    )["ratings"].append(rating)
-                    st.success("Rating saved!")
-            st.markdown("---")
+                        st.session_state.favorite_recipes.pop
 
-# dish of the day
-score_df = build_score_df()
-best, best_score = choose_dish_of_the_day(score_df)
-if best:
-    st.header("🌟 Dish of the Day")
-    st.subheader(best["title"])
-    st.image(best["image"], width=350)
-    st.markdown(
-        f"**Composite Score:** {best_score:.2%}\n\n"
-        f"⭐ Bayes rating: {best['bayes_rating']:.2f} / 5\n"
-        f"💰 Price (after rating): {best['price']:.2f} {PRICE_CURRENCY}\n"
-        f"🔥 Calories: {best['calories']:.0f} kcal"
-    )
-
-# visualisation
-if not score_df.empty:
-    st.subheader("📊 Rated dishes – composite score")
-    chart = (
-        alt.Chart(score_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("score:Q", title="Composite score (0-1)"),
-            y=alt.Y("title:N", sort="-x", title="Dish"),
-            color=alt.condition(
-                alt.datum.title == best.get("title", ""), alt.value("#ffbf00"), alt.value("#3182bd")
-            ),
-            tooltip=[
-                alt.Tooltip("title:N", title="Dish"),
-                alt.Tooltip("bayes_rating:Q", title="Bayes rating", format=".2f"),
-                alt.Tooltip("price:Q", title=f"Price ({PRICE_CURRENCY})", format=".2f"),
-                alt.Tooltip("calories:Q", title="Calories", format=".0f"),
-                alt.Tooltip("score:Q", title="Score", format=".2%"),
-            ],
-        )
-        .properties(height=280)
-    )
-    st.altair_chart(chart, use_container_width=True)
