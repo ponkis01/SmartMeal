@@ -124,7 +124,7 @@ max_calories = st.sidebar.slider("Max. Calories", 100, 1500, 600)
 number = st.sidebar.slider("Number of Meals", 1, 10, 3)
 
 # 🔍 Trigger search – store result in session_state
-action_search = st.button("🔍 Search Meals with Filters")
+action_search = st.sidebar.button("🔍 Search Meals with Filters")
 if action_search:
     st.session_state.recipes = search_recipes_by_protein(
         min_protein=min_protein, max_calories=max_calories, number=number
