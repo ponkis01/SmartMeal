@@ -2,4 +2,5 @@ requests
 streamlit
 pandas
 altair 
-
+numpy
+matplotlib.pyplot
