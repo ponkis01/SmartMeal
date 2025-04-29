@@ -3,8 +3,6 @@ import requests
 import streamlit as st
 import pandas as pd
 import altair as alt
-import numpy as np
-import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional
 
 # ------------------------
@@ -67,35 +65,6 @@ def search_recipes_by_protein(
     data = _get("https://api.spoonacular.com/recipes/complexSearch", params)
     return [fetch_recipe_info(r["id"]) for r in data.get("results", [])]
 
-
-# 👉 Taste profile (Radar) ----------------------------------------------------
-
-@st.cache_data(ttl=60 * 60 * 24)
-def fetch_taste_profile(recipe_id: int) -> Dict[str, float]:
-    """Returns sweetness, saltiness, etc. values 0‑100."""
-    return _get(f"https://api.spoonacular.com/recipes/{recipe_id}/tasteWidget.json")
-
-
-def render_taste_radar(profile: Dict[str, float]):
-    if not profile:
-        st.info("No taste profile available for this recipe.")
-        return
-
-    labels = list(profile.keys())
-    values = [profile[l] for l in labels]
-    values += values[:1]  # close loop
-    angles = np.linspace(0, 2 * np.pi, len(labels) + 1)
-
-    fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
-    ax.plot(angles, values, linewidth=2)
-    ax.fill(angles, values, alpha=0.25)
-    ax.set_thetagrids(angles[:-1] * 180 / np.pi, labels)
-    ax.set_ylim(0, 100)
-    ax.set_title("Taste profile (0‑100)")
-    ax.grid(True)
-    st.pyplot(fig, use_container_width=False)
-
-
 # ------------------------
 # 💰 Price helpers
 # ------------------------
@@ -113,7 +82,6 @@ def calculate_price(base_price: float, rating: float) -> float:
     if rating < 3.0:
         return round(base_price * 0.9, 2)
     return round(base_price, 2)
-
 
 # ------------------------
 # 🧠 Session State init
@@ -143,6 +111,7 @@ def extract_calories(recipe: Dict) -> float:
             return n["amount"]
     return 0.0
 
+# Composite‑score weights
 WEIGHT_RATING = 0.5
 WEIGHT_PRICE = 0.3
 WEIGHT_CAL = 0.2
@@ -191,6 +160,26 @@ def choose_dish_of_the_day(df: pd.DataFrame) -> Tuple[Optional[Dict], float]:
         return None, 0.0
     best = df.loc[df["score"].idxmax()]
     return best.to_dict(), best["score"]
+
+# ------------------------
+# 🍳 INSTRUCTION RENDERER
+# ------------------------
+
+def render_instructions(recipe: Dict) -> None:
+    """Display step‑by‑step cooking instructions inside an expander."""
+    instructions = recipe.get("analyzedInstructions", [])
+    if not instructions:
+        st.info("No instructions provided for this recipe.")
+        return
+
+    for block in instructions:
+        steps = block.get("steps", [])
+        for step in steps:
+            num = step.get("number")
+            text = step.get("step", "")
+            st.markdown(f"**Step {num}.** {text}")
+            if length := step.get("length"):
+                st.caption(f"⏱ {length['number']} {length['unit']}")
 
 # ------------------------
 # 🚀 Streamlit UI
@@ -246,5 +235,73 @@ else:
                 label = "★ Remove" if fav else "☆ Favorite"
                 if st.button(label, key=f"fav_{rid}"):
                     if fav:
-                        st.session_state.favorite_recipes.pop
+                        st.session_state.favorite_recipes.pop(rid)
+                    else:
+                        st.session_state.favorite_recipes[rid] = rec
+            kcal = extract_calories(rec)
+            macros = {n["name"]: n["amount"] for n in rec["nutrition"]["nutrients"]}
+            st.markdown(
+                f"🧪 **Calories:** {kcal:.0f} kcal | 💪 Protein: {macros.get('Protein', 0):.1f} g | 💰 Price: {base_price:.2f} {PRICE_CURRENCY}"
+            )
 
+            # Rating form
+            with st.form(key=f"form_{rid}"):
+                rating = st.slider("🧑‍🏫 Your rating", 1.0, 5.0, 4.0, 0.5, key=f"rate_{rid}")
+                dyn_price = calculate_price(base_price, rating)
+                st.markdown(f"💰 Price after rating: {dyn_price:.2f} {PRICE_CURRENCY}")
+                if st.form_submit_button("✅ Save rating"):
+                    st.session_state.recipe_ratings.setdefault(
+                        rid,
+                        {
+                            "title": rec["title"],
+                            "image": rec["image"],
+                            "calories": kcal,
+                            "base_price": base_price,
+                            "ratings": [],
+                        },
+                    )["ratings"].append(rating)
+                    st.success("Rating saved!")
+
+            # Cooking instructions expander
+            with st.expander("👩‍🍳 Show cooking instructions"):
+                render_instructions(rec)
+
+            st.markdown("---")
+
+# Dish of the day -------------------------------------------------------------
+score_df = build_score_df()
+best, best_score = choose_dish_of_the_day(score_df)
+if best:
+    st.header("🌟 Dish of the Day")
+    st.subheader(best["title"])
+    st.image(best["image"], width=350)
+    st.markdown(
+        f"**Composite Score:** {best_score:.2%}\n\n"
+        f"⭐ Bayes rating: {best['bayes_rating']:.2f} / 5\n"
+        f"💰 Price (after rating): {best['price']:.2f} {PRICE_CURRENCY}\n"
+        f"🔥 Calories: {best['calories']:.0f} kcal"
+    )
+
+# Score chart -----------------------------------------------------------------
+if not score_df.empty:
+    st.subheader("📊 Rated dishes – composite score")
+    chart = (
+        alt.Chart(score_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("score:Q", title="Composite score (0-1)"),
+            y=alt.Y("title:N", sort="-x", title="Dish"),
+            color=alt.condition(
+                alt.datum.title == best.get("title", ""), alt.value("#ffbf00"), alt.value("#3182bd")
+            ),
+            tooltip=[
+                alt.Tooltip("title:N", title="Dish"),
+                alt.Tooltip("bayes_rating:Q", title="Bayes rating", format=".2f"),
+                alt.Tooltip("price:Q", title=f"Price ({PRICE_CURRENCY})", format=".2f"),
+                alt.Tooltip("calories:Q", title="Calories", format=".0f"),
+                alt.Tooltip("score:Q", title="Score", format=".2%"),
+            ],
+        )
+        .properties(height=280)
+    )
+    st.altair_chart(chart, use_container)
