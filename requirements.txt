@@ -1,3 +1,6 @@
 requests
 streamlit
-
+random
+pandas
+altair 
+typing 
