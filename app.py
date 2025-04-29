@@ -304,4 +304,4 @@ if not score_df.empty:
         )
         .properties(height=280)
     )
-    st.altair_chart(chart, use_container)
+    st.altair_chart(chart, use_container_width=True)
