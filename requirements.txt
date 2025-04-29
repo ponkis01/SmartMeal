@@ -3,4 +3,4 @@ streamlit
 pandas
 altair 
 numpy
-matplotlib.pyplot
+matplotlib
