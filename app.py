@@ -204,7 +204,7 @@ if st.button("🔍 Search Meals with Filters"):
 
 # list recipes
 if not st.session_state.recipes:
-    st.info("Benutze die Suche, um passende Gerichte zu finden.")
+    st.info("Use the search button to find new recipes.")
 else:
     for rec in st.session_state.recipes:
         rid = rec["id"]
