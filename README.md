@@ -15,3 +15,4 @@ SmartMeal is a Python-based application that uses the Spoonacular API to suggest
 - 🥩 Filter meals by protein content (e.g., high-protein only)
 
 ---
+Open app: https://smartmeal-ytgekabzxzawf8zgfkfwms.streamlit.app/
