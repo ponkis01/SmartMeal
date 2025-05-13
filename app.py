@@ -605,40 +605,10 @@ if best:
     )
     # Displays composite score, Bayesian rating, price, calories.
 
-# Score chart -----------------------------------------------------------------
-if not score_df.empty:
-    st.subheader("📊 Rated dishes – composite score")
-    # Subheader for composite score visualization.
-    
-    chart = (
-        alt.Chart(score_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("score:Q", title="Composite score (0-1)"),
-            y=alt.Y("title:N", sort="-x", title="Dish"),
-            color=alt.condition(
-                alt.datum.title == best.get("title", ""), alt.value("#ffbf00"), alt.value("#3182bd")
-            ),
-            tooltip=[
-                alt.Tooltip("title:N", title="Dish"),
-                alt.Tooltip("bayes_rating:Q", title="Bayes rating", format=".2f"),
-                alt.Tooltip("price:Q", title=f"Price ({PRICE_CURRENCY})", format=".2f"),
-                alt.Tooltip("calories:Q", title="Calories", format=".0f"),
-                alt.Tooltip("score:Q", title="Score", format=".2%"),
-            ],
-        )
-        .properties(height=280)
-    )
-    # Altair bar chart for composite scores, top dish in gold.
-    
-    st.altair_chart(chart, use_container_width=True)
-    # Renders chart, scaling to container width.
-
-# ------------------------------------------------
 # ------------------------------------------------
 # 🚀 Visualisierungen
 # ------------------------------------------------
-# ------------------------------------------------
+
 # Section defines visualizations for meal preferences and overview table.
 
 if st.session_state.recipe_ratings:
@@ -786,10 +756,9 @@ else:
     # Info message if no ratings for visualization.
 
 # ------------------------------------------------
-# ------------------------------------------------
 # 🚀 Visualisierungen 2
 # ------------------------------------------------
-# ------------------------------------------------
+
 # Section defines macronutrient breakdown visualization.
 
 if st.session_state.recipe_ratings:
