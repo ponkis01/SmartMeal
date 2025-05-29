@@ -48,7 +48,10 @@ def _get(url: str, params: Optional[Dict] = None) -> Dict:
     # Sends GET request with parameters and 15-second timeout, returns JSON response.
     # Data Flow: Response dictionary with recipe/search data passed to caller.
 
-# ⬇️ SPOONACULAR FETCHERS ----------------------------------------------------
+# ------------------------------------------------
+# ⬇️ SPOONACULAR FETCHERS
+# ------------------------------------------------
+
 # Section contains functions fetching specific recipe data from Spoonacular API.
 
 def fetch_recipe_info(recipe_id: int) -> Dict:
@@ -155,6 +158,7 @@ def search_recipes_by_protein(
 # ------------------------
 # 💰 Price helpers
 # ------------------------
+
 # Section contains functions for calculating/adjusting recipe prices by ratings.
 
 def extract_base_price(recipe: Dict) -> float:
@@ -216,6 +220,7 @@ if "favorite_recipes" not in st.session_state:
 # ------------------------
 # 🔬 Metrics helpers
 # ------------------------
+
 # Section contains functions for metrics like Bayesian averages and scores.
 
 def bayesian_average(ratings: List[float], C: float = 3.5, m: int = 5) -> float:
@@ -363,6 +368,7 @@ def choose_dish_of_the_day(df: pd.DataFrame) -> Tuple[Optional[Dict], float]:
 # ------------------------
 # 🍳 INSTRUCTION RENDERER
 # ------------------------
+
 # Section contains function to display cooking instructions.
 
 def render_instructions(recipe: Dict) -> None:
@@ -405,6 +411,7 @@ def render_instructions(recipe: Dict) -> None:
 # ------------------------
 # 🚀 Streamlit UI
 # ------------------------
+
 # Section defines main Streamlit UI components, layout, filters, recipe displays.
 
 st.set_page_config(page_title="SmartMeal 🍽️", layout="centered")
@@ -485,8 +492,10 @@ if st.button("🔍 Search meals with filters"):
     )
     # Calls search_recipes_by_protein, stores results in session state.
     # Data Flow: Recipes populate UI recipe list.
+# ------------------------------------------------
+# Recipe list
+# ------------------------------------------------
 
-# Recipe list ----------------------------------------------------------------
 if not st.session_state.recipes:
     st.info("Use the search to find matching dishes.")
 # Shows info message if no recipes (e.g., before search).
@@ -579,7 +588,10 @@ else:
             st.markdown("---")
             # Horizontal line to separate recipes in UI.
 
-# Dish of the day -------------------------------------------------------------
+# ------------------------------------------------
+# Dish of the day 
+# ------------------------------------------------
+
 score_df = build_score_df()
 # Builds DataFrame with composite scores for rated recipes.
 
@@ -605,7 +617,7 @@ if best:
     # Displays composite score, Bayesian rating, price, calories.
 
 # ------------------------------------------------
-# 🚀 Visualisierungen
+# 🚀 Visualization 1
 # ------------------------------------------------
 
 # Section defines visualizations for meal preferences and overview table.
@@ -755,7 +767,7 @@ else:
     # Info message if no ratings for visualization.
 
 # ------------------------------------------------
-# 🚀 Visualisierungen 2
+# 🚀 Visualization 2
 # ------------------------------------------------
 
 # Section defines macronutrient breakdown visualization.
