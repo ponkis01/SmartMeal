@@ -20,8 +20,7 @@ from typing import List, Dict, Tuple, Optional
 # 🔐 Spoonacular API Key
 # ------------------------
 # Section defines configuration variables for Spoonacular API and pricing currency.
-
-API_KEY = "af3d3f0206044a5a8fa852bec4ffd6a5"
+# API Key is hidden in streamlit secrets direct (in order to not be public for everyone)
 # Stores Spoonacular API key, required to authenticate API requests.
 
 PRICE_CURRENCY = "CHF"  # Treat Spoonacular USD roughly as CHF
